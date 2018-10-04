@@ -56,7 +56,7 @@ class Agent(object):
             y = self.py + time * self.vy
         else:
             x=self.px+time*action.vx
-            y=self.px+time*action.vy
+            y=self.py+time*action.vy
         return x, y
 class Obstacle():
     def __init__(self,px,py,radius):
@@ -69,7 +69,7 @@ class Obstacle():
 class ENV(object):
     action_bound = [-1, 1]
     action_dim = 2
-    point_l = 15
+    point_l = 5
     num_sensor=16
     state_dim = num_sensor+3
     viewer = None
@@ -86,8 +86,8 @@ class ENV(object):
         self.obstacles=[None]*num_obstacles
         self.agent_radius=agent_radius
         self.proportion=50
-        self.grab_counter=0
-        self.get_point=False
+        self.grab_counter=[0]*num_agents
+        self.get_point=[False]*num_agents
         
         
         
@@ -105,18 +105,18 @@ class ENV(object):
         return s,r,dis_to_goal
     
     def compute_reward(self,agent_id,action):
-        def _r_func(self, abs_distance):
+        def _r_func( abs_distance,idx):
             t = 50
             r = -abs_distance/200
-            if abs_distance < self.point_l and (not self.get_point):
+            if abs_distance < self.point_l and (not self.get_point[idx]):
                 r += 1.
-                self.grab_counter += 1
-                if self.grab_counter > t:
+                self.grab_counter[idx] += 1
+                if self.grab_counter[idx] > t:
                     r += 10.
-                    self.get_point = True
+                    self.get_point[idx] = True
             elif abs_distance > self.point_l:
-                self.grab_counter = 0
-                self.get_point = False
+                self.grab_counter[idx] = 0
+                self.get_point[idx] = False
             return r
         
         agent=self.agents[agent_id]
@@ -133,7 +133,8 @@ class ENV(object):
             reward=-10.
         else:
             distance_to_goal=math.sqrt(pow(agent_pgx-agent_px,2)+pow(agent_pgy-agent_py,2))
-            reward=_r_func(distance_to_goal)
+            #print("distance_to_goal:",distance_to_goal)
+            reward=_r_func(distance_to_goal,agent_id)
         return reward
         
 
@@ -143,14 +144,16 @@ class ENV(object):
     def render(self):
         if self.viewer is None:
             self.viewer = Viewer(*self.viewer_xy, self.agents, self.obstacles)
-        self.viewer.render()
+        else:
+            self.viewer.update(self.agents)
+            self.viewer.render()
     
     def set_fps(self, fps=30):
         pyglet.clock.set_fps_limit(fps)
     
     def _reset_agents(self):
         self.agents=[None]*self.num_agents
-        self.get_point=False
+        self.get_point=[False]*self.num_agents
         for i in range(len(self.agents)):
             is_collision=True
             while is_collision:
@@ -170,7 +173,8 @@ class ENV(object):
             pgx,pgy=self.agents[i].get_position()
             agent_i=Agent(px,py,pgx,pgy,self.agent_radius)
             self.agents[i]=agent_i
-                
+            
+            
     def _reset_obstacles(self,radius_bound):
         assert len(radius_bound)==2
         self.obstacles=[None]*len(self.obstacles)
@@ -245,96 +249,96 @@ class ENV(object):
             actions.append(np.random.uniform(*self.action_bound, size=self.action_dim))
         return np.array(actions)
     
+    
+    def _calc_sensor_info(self,idx):
+        def update_s(s,relative_px,relative_py,num_sensor,ob_radius,sensor_radius):
+            assert len(s)==num_sensor
+            dist2_cur_agent=math.sqrt(pow(relative_px,2)+pow(relative_py,2))
+            if dist2_cur_agent-ob_radius>sensor_radius:
+                return
+            if dist2_cur_agent<ob_radius:
+                for i in range(len(s)):
+                    s[i]=1.
+                return
+            center_angle_rad=math.atan2(relative_py,relative_px)
+            split_angle=abs(math.atan2(ob_radius,math.sqrt(pow(dist2_cur_agent,2)-pow(ob_radius,2))))
+            start_angle=center_angle_rad-split_angle
+            end_angle=center_angle_rad+split_angle
+            if start_angle<0:
+                start_angle+=2*math.pi
+            if end_angle<0:
+                end_angle+=2*math.pi
+            if center_angle_rad<0:
+                center_angle_rad+=2*math.pi
+            each_angle=2*math.pi/num_sensor
+            start_i=math.floor(start_angle/each_angle)
+            end_i=math.ceil(end_angle/each_angle)
+            center_i=center_angle_rad/each_angle
+            for j in range(start_i,end_i):
+                if center_i>j and center_i<j+1:
+                    s[j]=max((sensor_radius-(dist2_cur_agent-ob_radius))/sensor_radius,s[j])
+                    continue
+                elif center_i>j:
+                    line_j=j+1
+                    length2_obstacle=dist2_cur_agent*math.cos(center_angle_rad-each_angle*line_j)-math.sqrt(ob_radius**2-(dist2_cur_agent*math.sin(center_angle_rad-each_angle*line_j))**2)
+                    s[j]=max((sensor_radius-length2_obstacle)/sensor_radius,s[j])
+                    #print("length2_obstacle:",length2_obstacle,"center_angle_rad-each_angle*line_j:",center_angle_rad-each_angle*line_j)
+                elif center_i<j:
+                    line_j=j
+                    length2_obstacle=dist2_cur_agent*math.cos(center_angle_rad-each_angle*line_j)-math.sqrt(ob_radius**2-(dist2_cur_agent*math.sin(center_angle_rad-each_angle*line_j))**2)
+                    s[j]=max((sensor_radius-length2_obstacle)/sensor_radius,s[j])                
+        
+        agent=self.agents[idx]
+        _self_px,_self_py=agent.get_position()
+        sensor_info=[0.]*self.num_sensor
+        sensor_radius=agent.get_sensor_radius()
+        
+        for i in range(len(self.agents)):
+            if i==idx:
+                continue
+            cur_agent=self.agents[i]
+            if cur_agent==None:
+                continue
+            cur_agent_px,cur_agent_py=cur_agent.get_position()
+            relative_px,relative_py=cur_agent_px-_self_px,cur_agent_py-_self_py
+            update_s(sensor_info,relative_px,relative_py,self.num_sensor,self.agent_radius,sensor_radius)
+        
+        for i in range(len(self.obstacles)):
+            cur_obstacle=self.obstacles[i]
+            if cur_obstacle==None:
+                continue
+            cur_ob_px,cur_ob_py,cur_ob_radius=cur_obstacle.get_observable_state()
+            relative_px,relative_py=cur_agent_px-_self_px,cur_agent_py-_self_py
+            update_s(sensor_info,relative_px,relative_py,self.num_sensor,cur_ob_radius,sensor_radius)
+        
+        #传感器检测到与墙壁的距离
+        epsilon=0.0000001
+        for i in range(self.num_sensor):
+            each_angle=2*math.pi/self.num_sensor
+            cur_sensor_angle=each_angle*(i+1/2.0)+epsilon
+            dist2_edge=sensor_radius
+            if cur_sensor_angle>0 and cur_sensor_angle<=math.pi/2:
+                x2edge,y2edge=self.x_max-_self_px,self.y_max-_self_py
+                dist2_edge=min(x2edge/math.cos(cur_sensor_angle),y2edge/math.sin(cur_sensor_angle))
+            elif cur_sensor_angle<=math.pi:
+                x2edge,y2edge=_self_px,self.y_max-_self_py
+                dist2_edge=min(x2edge/math.cos(math.pi-cur_sensor_angle),y2edge/math.cos(cur_sensor_angle-math.pi/2))
+            elif cur_sensor_angle<=3/2.0*math.pi:
+                x2edge,y2edge=_self_px,_self_py
+                dist2_edge=min(x2edge/math.cos(cur_sensor_angle-math.pi),y2edge/math.cos(math.pi*3/2-cur_sensor_angle))
+            else:
+                x2edge,y2edge=self.x_max-_self_px,_self_py
+                dist2_edge=min(x2edge/math.cos(2*math.pi-cur_sensor_angle),y2edge/math.cos(cur_sensor_angle-math.pi*3/2.0))
+            dist2_edge=min(sensor_radius,dist2_edge)
+            sensor_info[i]=(sensor_radius-dist2_edge)/sensor_radius
+        return sensor_info
+    
     def _get_state(self,agent_id):
-        def _calc_sensor_info(self,idx):
-            
-            def update_s(s,relative_px,relative_py,num_sensor,ob_radius,sensor_radius):
-                assert len(s)==num_sensor
-                dist2_cur_agent=math.sqrt(pow(relative_px,2)+pow(relative_py,2))
-                if dist2_cur_agent-ob_radius>sensor_radius:
-                    return
-                if dist2_cur_agent<ob_radius:
-                    for i in range(len(s)):
-                        s[i]=1.
-                    return
-                center_angle_rad=math.atan2(relative_py,relative_px)
-                split_angle=abs(math.atan2(ob_radius,math.sqrt(pow(dist2_cur_agent,2)-pow(ob_radius,2))))
-                start_angle=center_angle_rad-split_angle
-                end_angle=center_angle_rad+split_angle
-                if start_angle<0:
-                    start_angle+=2*math.pi
-                if end_angle<0:
-                    end_angle+=2*math.pi
-                if center_angle_rad<0:
-                    center_angle_rad+=2*math.pi
-                each_angle=2*math.pi/num_sensor
-                start_i=math.floor(start_angle/each_angle)
-                end_i=math.ceil(end_angle/each_angle)
-                center_i=center_angle_rad/each_angle
-                for j in range(start_i,end_i):
-                    if center_i>j and center_i<j+1:
-                        s[j]=max((sensor_radius-(dist2_cur_agent-ob_radius))/sensor_radius,s[j])
-                        continue
-                    elif center_i>j:
-                        line_j=j+1
-                        length2_obstacle=dist2_cur_agent*math.cos(center_angle_rad-each_angle*line_j)-math.sqrt(ob_radius**2-(dist2_cur_agent*math.sin(center_angle_rad-each_angle*line_j))**2)
-                        s[j]=max((sensor_radius-length2_obstacle)/sensor_radius,s[j])
-                        #print("length2_obstacle:",length2_obstacle,"center_angle_rad-each_angle*line_j:",center_angle_rad-each_angle*line_j)
-                    elif center_i<j:
-                        line_j=j
-                        length2_obstacle=dist2_cur_agent*math.cos(center_angle_rad-each_angle*line_j)-math.sqrt(ob_radius**2-(dist2_cur_agent*math.sin(center_angle_rad-each_angle*line_j))**2)
-                        s[j]=max((sensor_radius-length2_obstacle)/sensor_radius,s[j])                
-            
-            agent=self.agents[idx]
-            _self_px,_self_py=agent.get_position()
-            sensor_info=[0.]*self.num_sensor
-            sensor_radius=agent.get_sensor_radius()
-            
-            for i in range(len(self.agents)):
-                if i==idx:
-                    continue
-                cur_agent=self.agents[i]
-                if cur_agent==None:
-                    continue
-                cur_agent_px,cur_agent_py=cur_agent.get_position()
-                relative_px,relative_py=cur_agent_px-_self_px,cur_agent_py-_self_py
-                update_s(sensor_info,relative_px,relative_py,self.num_sensor,self.agent_radius,sensor_radius)
-            
-            for i in range(len(self.obstacles)):
-                cur_obstacle=self.obstacles[i]
-                if cur_obstacle==None:
-                    continue
-                cur_ob_px,cur_ob_py,cur_ob_radius=cur_obstacle.get_observable_state()
-                relative_px,relative_py=cur_agent_px-_self_px,cur_agent_py-_self_py
-                update_s(sensor_info,relative_px,relative_py,self.num_sensor,cur_ob_radius,sensor_radius)
-            
-            #传感器检测到与墙壁的距离
-            epsilon=0.0000001
-            for i in range(len(self.num_sensor)):
-                each_angle=2*math.pi/self.num_sensor
-                cur_sensor_angle=each_angle*(i+1/2.0)+epsilon
-                dist2_edge=sensor_radius
-                if cur_sensor_angle>0 and cur_sensor_angle<=math.pi/2:
-                    x2edge,y2edge=self.max_x-_self_px,self.max_y-_self_py
-                    dist2_edge=min(x2edge/math.cos(cur_sensor_angle),y2edge/math.sin(cur_sensor_angle))
-                elif cur_sensor_angle<=math.pi:
-                    x2edge,y2edge=_self_px,self.max_y-_self_py
-                    dist2_edge=min(x2edge/math.cos(math.pi-cur_sensor_angle),y2edge/math.cos(cur_sensor_angle-math.pi/2))
-                elif cur_sensor_angle<=3/2.0*math.pi:
-                    x2edge,y2edge=_self_px,_self_py
-                    dist2_edge=min(x2edge/math.cos(cur_sensor_angle-math.pi),y2edge/math.cos(math.pi*3/2-cur_sensor_angle))
-                else:
-                    x2edge,y2edge=self.x_max-_self_px,_self_py
-                    dist2_edge=min(x2edge/math.cos(2*math.pi-cur_sensor_angle),y2edge/math.cos(cur_sensor_angle-math.pi*3/2.0))
-                dist2_edge=min(sensor_radius,dist2_edge)
-                sensor_info[i]=(sensor_radius-dist2_edge)/sensor_radius
-            return sensor_info
-
         sensor_info=self._calc_sensor_info(agent_id)
         agent=self.agents[agent_id]
         _px,_py,_pgx,_pgy=agent.get_observable_state()
         _relative_x,_relative_y=_pgx-_px,_pgy-_py
-        in_point = 1 if self.grab_counter > 0 else 0
+        in_point = 1 if self.grab_counter[agent_id] > 0 else 0
         
         s=np.hstack([in_point,_relative_x,_relative_y,sensor_info])
         
@@ -355,6 +359,8 @@ class Viewer(pyglet.window.Window):
         self.agents_info=agents_info
         self.obstacles_info=obstacle_info
         
+        self.viewer_xy=(width,height)
+        
         self.center_coord = np.array((min(width, height)/2, ) * 2)
         self.batch = pyglet.graphics.Batch()
         self.batch_box=[]
@@ -366,11 +372,22 @@ class Viewer(pyglet.window.Window):
         self.dispatch_events()
         self.dispatch_event('on_draw')
         self.flip()
+    
+    def update(self,agents,obstacles=None):
+        self.agents=agents
+        if obstacles!=None:
+            self.obstacles=obstacles
+        
     def on_draw(self):
         self.clear()
         #self.batch.draw()
+        #width=self.viewer_xy[0]
+        #height=self.viewer_xy[1]
+        #blank_cover_pts=[0,0,width,0,width,height,0,height]
+        #c=(255,255,255)*4
+        #blank_cover=pyglet.graphics.vertex_list(4, ('v2f', blank_cover_pts), ('c3B', c))
+        #blank_cover.draw(pyglet.gl.GL_TRIANGLE_FAN)
         for graph in self.batch_box:
-            
             graph.draw(pyglet.gl.GL_TRIANGLE_FAN)
         
     def _update_env(self):
@@ -382,26 +399,22 @@ class Viewer(pyglet.window.Window):
                 pt_x=px+radius*math.cos(each_angle*i)
                 pt_y=py+radius*math.sin(each_angle*i)
                 verticle_list+=pt_x,pt_y
-                #verticle_list.append(pt_y)
-            #verticle_list[-1]=verticle_list[1]
-            #verticle_list[-2]=verticle_list[0]
             return verticle_list
         
         c1, c2, c3 = (249, 86, 86), (86, 109, 249), (149, 139, 65)
+        self.batch_box=[]
         for agent in self.agents_info:
             _px,_py,_pgx,_pgy=agent.get_observable_state()
+            #print("_px:",_px,"_py:",_py,"_pgx:",_pgx,"_pgy:",_pgy)
             _radius=agent.get_agent_radius()
             num_circle_point=30
             agent_verticles=generate_circle_verticles(_px,_py,_radius,num_circle_point)
-            #print(len())
-            #assert num_circle_point==len(agent_verticles)
-            #b.add(p+1, pyglet.gl.GL_TRIANGLE_FAN, None, ('v2i', P), ('c3B', (c)))
 
             agent_circle = pyglet.graphics.vertex_list(num_circle_point, ('v2f', agent_verticles), ('c3B', c2*num_circle_point))
             self.batch_box.append(agent_circle)
 
             #self.batch.add(num_circle_point, pyglet.gl.GL_LINE_LOOP, None, ('v2f', agent_verticles), ('c3B', c2*num_circle_point))
-            l_g=1
+            l_g=2
             goal_verticles=[_pgx-l_g,_pgy-l_g,_pgx+l_g,_pgy-l_g,_pgx+l_g,_pgy+l_g,_pgx-l_g,_pgy+l_g]
             goal_pt=pyglet.graphics.vertex_list(4, ('v2f', goal_verticles), ('c3B', c1*4))
             self.batch_box.append(goal_pt)
@@ -415,15 +428,23 @@ class Viewer(pyglet.window.Window):
             #self.batch.add(num_circle_point, pyglet.gl.GL_TRIANGLE_FAN, None, ('v2f', obstacle_verticles), ('c3B', c2*num_circle_point))
             #self.batch.add(num_circle_point, pyglet.gl.GL_QUADS, None, ('v2f', obstacle_verticles), ('c3B', c3*num_circle_point))
         
+        
 def test():
-    num_agents=12
+    num_agents=6
     num_obstacles=12
     agent_radius=10
     viewer_xy=(400,400)
     new_env=ENV(num_agents,num_obstacles,agent_radius,viewer_xy)
     new_env.reset()
+    new_env.reset()
     new_env.render()
     new_env.render()
+    #input()
+    for i in range(200):
+        actions=new_env.sample_action()
+        new_env.step(actions)
+        new_env.render()
+    #new_env.render()
     
 if __name__=="__main__":
     test()
