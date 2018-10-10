@@ -23,15 +23,16 @@ import numpy as np
 import os
 import shutil
 from Env import ENV
+import random
 
 
 np.random.seed(1)
 tf.set_random_seed(1)
 
 MAX_EPISODES = 300   #default 600
-MAX_EP_STEPS = 500
-LR_A = 1e-4  # learning rate for actor
-LR_C = 1e-4  # learning rate for critic
+MAX_EP_STEPS = 300
+LR_A = 5e-4  # learning rate for actor
+LR_C = 5e-4  # learning rate for critic
 GAMMA = 0.9  # reward discount
 REPLACE_ITER_A = 1100
 REPLACE_ITER_C = 1000
@@ -41,7 +42,7 @@ VAR_MIN = 0.1
 RENDER = True
 LOAD = False
 NUM_AGENTS=1
-NUM_OBSTACLES=0
+NUM_OBSTACLES=6
 AGENTS_RADIUS=10
 viewer_xy=(400,400)
 MODE = ['easy', 'hard']
@@ -179,6 +180,7 @@ class Critic(object):
         if self.t_replace_counter % self.t_replace_iter == 0:
             self.sess.run([tf.assign(t, e) for t, e in zip(self.t_params, self.e_params)])
         self.t_replace_counter += 1
+        #print("learn:",self.t_replace_counter)
 
 class Memory(object):
     def __init__(self, capacity, dims):#capacity存储量
@@ -217,26 +219,42 @@ else:
 
 
 def train():
-    var = 2.  # control exploration
+    var = 0.5  # control exploration
+    expore_rate=1
 
     for ep in range(MAX_EPISODES):#600个片段
+        if ep%10==0 and ep!=0:
+            expore_rate*=0.9
         s = env.reset()#1，state 
         ep_reward = [0]*NUM_AGENTS
         #print("s:",s)
+        #expore_rate=max(0.1,expore_rate*0.999)
+        print("expore_rate:",expore_rate)
 
         done=[False]*NUM_AGENTS
         for t in range(MAX_EP_STEPS):#200一个片段两百次尝试
             if RENDER:
                 env.render()
             
+            random_actions=env.sample_action()
+            
             for idx in range(NUM_AGENTS):
                 a = actor.choose_action(s[idx])
-                a = np.clip(np.random.normal(a, var), *ACTION_BOUND)
+                
+                if random.randint(0,100)<expore_rate*100:
+                    a=random_actions[idx]
+                    #print("random_a:",a)
+                #else:
+                #a = np.clip(np.random.normal(a, var), *ACTION_BOUND)
+                #print("a:",a,"expore_rate:",var)
                 
                 if done[idx]==True:
                     continue
                 
                 s_, r, done_i = env.step_single(a,idx)
+                
+                print("a",a,"r",r)
+                
                 done[idx]=done_i
                 #print("done:",done)
                 M.store_transition(s[idx], a, r, s_)
@@ -248,15 +266,17 @@ def train():
                     b_a = b_M[:, STATE_DIM: STATE_DIM + ACTION_DIM]#动作数据
                     b_r = b_M[:, -STATE_DIM - 1: -STATE_DIM]#奖励数据
                     b_s_ = b_M[:, -STATE_DIM:]#下一个状态
+                    critic.learn(b_s, b_a, b_r, b_s_)
+                    actor.learn(b_s)
                 s[idx]=s_
                 ep_reward[idx] += r
-                
+            
             if t == MAX_EP_STEPS-1 :
                 result = '| done' if done else '| ----'
                 print('Ep:', ep,
                   result,
                   '| R: %i' % int(ep_reward[idx]),
-                  '| Explore: %.2f' % var,
+                  '| Explore: %.2f' % expore_rate,
                   )
                 break
                 
@@ -271,7 +291,12 @@ def train():
 def eval():
     env.set_fps(30)
     s = env.reset()
+    steps_num=0
     while True:
+        steps_num+=1
+        if steps_num>300:
+            s = env.reset()
+            steps_num=0
         done=[False]*NUM_AGENTS
         if RENDER:
             env.render()
@@ -279,12 +304,14 @@ def eval():
             if done[i]:
                 continue
             a = actor.choose_action(s[i])#训练结束后只需使用动作旋转网络进行动作决策。
-        #print("a:",a)
+            print("a:",a)
         #input()
             s_, r, done_i = env.step_single(a,i)
         #print("r:",r)
             s[i] = s_
             done[i]=done_i
+            if done==[True]*len(done):
+                s = env.reset()
             #print("len:",len(s))
 
 if __name__ == '__main__':

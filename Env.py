@@ -25,10 +25,13 @@ class Agent(object):
         self.sensor_radius=sensor_radius
 
     def update_state(self, action, time):
-        action.vx=action.vx*30
-        action.vy=action.vy*30
-        self.vx=action.vx
-        self.vy=action.vy
+        
+        action.theta=action.theta*math.pi
+        #print("theta:",action.theta)
+        action.v=30#action.v*50
+        
+        self.vx=action.v*math.cos(action.theta)
+        self.vy=action.v*math.sin(action.theta)
         self.px, self.py = self.compute_position(time=time, action=action)
 
     def reset(self):
@@ -58,8 +61,8 @@ class Agent(object):
             x = self.px + time * self.vx
             y = self.py + time * self.vy
         else:
-            x=self.px+time*action.vx
-            y=self.py+time*action.vy
+            x=self.px+time*action.v*math.cos(action.theta)
+            y=self.py+time*action.v*math.sin(action.theta)
         return x, y
 class Obstacle():
     def __init__(self,px,py,radius):
@@ -92,7 +95,7 @@ class ENV(object):
         self.obstacles=[None]*num_obstacles
         self.num_obstacles=num_obstacles
         self.agent_radius=agent_radius
-        self.distance_proportion=300
+        self.distance_proportion=100
         self.grab_counter=[0]*num_agents
         self.get_point=[False]*num_agents
         self.done=[False]*num_agents
@@ -122,10 +125,17 @@ class ENV(object):
     
     def compute_reward(self,agent_id,action):
         def _r_func( abs_distance,idx):
-            t = 2
-            r = -abs_distance/self.distance_proportion-0.1
+            t = 1
+            #r = -abs_distance/self.distance_proportion-0.1
+            
+            edge_bound=100
+            if abs_distance>edge_bound:
+                r=-2*(abs_distance-edge_bound)/self.distance_proportion-0.1
+            else:
+                r=3*(edge_bound-abs_distance)/edge_bound-0.1
+            
             if abs_distance < self.point_l and (not self.get_point[idx]):
-                r += 1.
+                r += 5.
                 self.grab_counter[idx] += 1
                 if self.grab_counter[idx] > t:
                     r += 10.
@@ -134,23 +144,25 @@ class ENV(object):
             elif abs_distance > self.point_l:
                 self.grab_counter[idx] = 0
                 self.get_point[idx] = False
+            #print("r:",r)
             return r
         
         agent=self.agents[agent_id]
         if agent==None:
             return 0
         assert len(action)==2
-        _action=namedtuple('vx','vy')
-        _action.vx=action[0]
-        _action.vy=action[1]
+        _action=namedtuple('theta','v')
+        _action.theta=action[0]
+        _action.v=action[1]
+        #print("theta:",action[0],"v:",action[1])
         agent.update_state(_action,self.dt)
         agent_px,agent_py,agent_pgx,agent_pgy=agent.get_observable_state()
         reward=0
         if(self._check_collision(agent_id=agent_id)):
-            reward=-10.
+            reward=-1.
             self.done[agent_id]=True
         else:
-            distance_to_goal=math.sqrt(pow(agent_pgx-agent_px,2)+pow(agent_pgy-agent_py,2))
+            distance_to_goal=math.sqrt((agent_pgx-agent_px)**2+(agent_pgy-agent_py)**2)
             #print("distance_to_goal:",distance_to_goal)
             reward=_r_func(distance_to_goal,agent_id)
         #print ('r',reward)
@@ -392,8 +404,9 @@ class ENV(object):
         _relative_x,_relative_y=_pgx-_px,_pgy-_py
         in_point = 1 if self.grab_counter[agent_id] > 0 else 0
         
-        s=np.hstack([in_point,_relative_x/self.distance_proportion,_relative_y/self.distance_proportion,sensor_info])
-        
+        relative_proporation=300
+        s=np.hstack([in_point,_relative_x/relative_proporation,_relative_y/relative_proporation,sensor_info])
+        #s=np.hstack([_relative_x/relative_proporation,_relative_y/relative_proporation])
         relative_xy=[_relative_x,_relative_y]#ToDo
         return s,relative_xy
         
@@ -484,10 +497,12 @@ def test():
     new_env.render()
     new_env.render()
     #input()
-    for i in range(200):
+    for i in range(1000):
         actions=new_env.sample_action()
+        print("actions[0].theta:",actions[0][0],"actions[0].v:",actions[0][1])
         s,r,dis_to_goal=new_env.step(actions)
         _agents,_obstacle=new_env.for_testing()
+        
         for agent in _agents:
             px,py,pgx,pgy=agent.get_observable_state()
             print("px:",px,"py:",py,"pgx:",pgx,"pgy:",pgy)
