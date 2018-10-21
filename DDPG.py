@@ -29,15 +29,15 @@ import random
 np.random.seed(1)
 tf.set_random_seed(1)
 
-MAX_EPISODES = 300   #default 600
-MAX_EP_STEPS = 300
-LR_A = 5e-4  # learning rate for actor
-LR_C = 5e-4  # learning rate for critic
+MAX_EPISODES = 500   #default 600
+MAX_EP_STEPS = 500
+LR_A = 3e-4  # learning rate for actor
+LR_C = 3e-4  # learning rate for critic
 GAMMA = 0.9  # reward discount
 REPLACE_ITER_A = 1100
 REPLACE_ITER_C = 1000
 MEMORY_CAPACITY = 5000
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 VAR_MIN = 0.1
 RENDER = True
 LOAD = False
@@ -253,7 +253,7 @@ def train():
                 
                 s_, r, done_i = env.step_single(a,idx)
                 
-                print("a",a,"r",r)
+                #print("a",a,"r",r)
                 
                 done[idx]=done_i
                 #print("done:",done)

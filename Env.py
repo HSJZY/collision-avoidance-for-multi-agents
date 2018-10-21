@@ -28,10 +28,10 @@ class Agent(object):
         
         action.theta=action.theta*math.pi
         #print("theta:",action.theta)
-        action.v=30#action.v*50
+        _v=30#action.v*50
         
-        self.vx=action.v*math.cos(action.theta)
-        self.vy=action.v*math.sin(action.theta)
+        self.vx=_v*math.cos(action.theta)
+        self.vy=_v*math.sin(action.theta)
         self.px, self.py = self.compute_position(time=time, action=action)
 
     def reset(self):
@@ -77,7 +77,7 @@ class Obstacle():
     
 class ENV(object):
     action_bound = [-1, 1]
-    action_dim = 2
+    action_dim = 1
     point_l = 10
     num_sensor=8
     state_dim = num_sensor+3
@@ -125,7 +125,7 @@ class ENV(object):
     
     def compute_reward(self,agent_id,action):
         def _r_func( abs_distance,idx):
-            t = 1
+            t = 0
             #r = -abs_distance/self.distance_proportion-0.1
             
             edge_bound=100
@@ -135,7 +135,7 @@ class ENV(object):
                 r=3*(edge_bound-abs_distance)/edge_bound-0.1
             
             if abs_distance < self.point_l and (not self.get_point[idx]):
-                r += 5.
+                r += 3.
                 self.grab_counter[idx] += 1
                 if self.grab_counter[idx] > t:
                     r += 10.
@@ -150,16 +150,17 @@ class ENV(object):
         agent=self.agents[agent_id]
         if agent==None:
             return 0
-        assert len(action)==2
+        assert len(action)==1
         _action=namedtuple('theta','v')
-        _action.theta=action[0]
-        _action.v=action[1]
+        _action.theta=action
+        
+        _action.v=30
         #print("theta:",action[0],"v:",action[1])
         agent.update_state(_action,self.dt)
         agent_px,agent_py,agent_pgx,agent_pgy=agent.get_observable_state()
         reward=0
         if(self._check_collision(agent_id=agent_id)):
-            reward=-1.
+            reward=-10.
             self.done[agent_id]=True
         else:
             distance_to_goal=math.sqrt((agent_pgx-agent_px)**2+(agent_pgy-agent_py)**2)
